@@ -1,1 +1,1 @@
-# mis04
+# mis04; Control de giro usando: Mando a Distancia VR, Controlador Bluetooth con Disparador. Control Remoto Bluetooth: Obturador, Pasar Páginas, PPT, Volumen y Mando para IOS y PC operating system. Marca: Erchineko
