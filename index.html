@@ -1,1 +1,255 @@
+<!doctype html>
+<!--
+Copyright 2018 The Immersive Web Community Group
+Licensed under the MIT License
+-->
+<html>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover'>
+  <meta name='mobile-web-app-capable' content='yes'>
+  <meta name='apple-mobile-web-app-capable' content='yes'>
+  <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
+  <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
+  <link rel='stylesheet' href='css/common.css'>
+  <title>Seguimiento a escala de la habitacion (Magic Window)</title>
+</head>
+<body>
+  <header>
+    <details open>
+      <summary>Escala de habitacion</summary>
+      <p>
+        Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del celular o con el ratón en la computadora.
+        También puedes usar la palanca derecha del control Xbox Robot White.
+        <a class="back" href="./">Back</a>
+      </p>
+    </details>
+  </header>
 
+  <script type="module">
+    import { WebXRButton } from './js/util/webxr-button.js';
+    import { Scene } from './js/render/scenes/scene.js';
+    import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
+    import { Gltf2Node } from './js/render/nodes/gltf2.js';
+    import { SkyboxNode } from './js/render/nodes/skybox.js';
+    import { InlineViewerHelper } from './js/util/inline-viewer-helper.js';
+    import { QueryArgs } from './js/util/query-args.js';
+
+    import WebXRPolyfill from './js/third-party/webxr-polyfill/build/webxr-polyfill.module.js';
+    if (QueryArgs.getBool('usePolyfill', true)) {
+      let polyfill = new WebXRPolyfill();
+    }
+
+    let xrButton = null;
+    let xrSession = null;
+    let xrRefSpace = null;
+    let inlineViewerHelper = null;
+
+    let gl = null;
+    let renderer = null;
+    let scene = new Scene();
+
+    scene.addNode(new Gltf2Node({url: 'media/gltf/camp/ciudad.gltf'}));
+    scene.addNode(new SkyboxNode({url: 'media/textures/textura.png'}));
+    scene.standingStats(true);
+
+    // ============================================================
+    // NUEVO: Soporte para palanca derecha del Robot White Xbox
+    // ============================================================
+    function getXboxGamepad() {
+      let gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (let gp of gamepads) {
+        if (gp && gp.connected && gp.id && gp.id.toLowerCase().includes('xbox')) {
+          return gp;
+        }
+      }
+      // Fallback: cualquier gamepad con 2 sticks
+      for (let gp of gamepads) {
+        if (gp && gp.connected && gp.axes && gp.axes.length >= 4) {
+          return gp;
+        }
+      }
+      return null;
+    }
+
+    function updateGamepadCamera() {
+      let gp = getXboxGamepad();
+      if (!gp) return;
+
+      const DEADZONE = 0.15;
+      const SENSITIVITY = 0.03;
+
+      // Right Stick del Xbox:
+      // axes[2] = X (izquierda/derecha) -> Yaw
+      // axes[3] = Y (arriba/abajo)      -> Pitch
+      let rx = gp.axes[2];
+      let ry = gp.axes[3];
+
+      if (Math.abs(rx) > DEADZONE) {
+        // CORREGIDO: signo invertido para que derecha = derecha
+        inlineViewerHelper.lookYaw -= rx * SENSITIVITY;
+      }
+      if (Math.abs(ry) > DEADZONE) {
+        inlineViewerHelper.lookPitch += ry * SENSITIVITY;
+      }
+
+      // Limitar pitch a ±90° (180° total de arriba a abajo). Sin ojos en la nuca.
+      const PITCH_LIMIT = Math.PI * 0.5;
+      if (inlineViewerHelper.lookPitch < -PITCH_LIMIT) {
+        inlineViewerHelper.lookPitch = -PITCH_LIMIT;
+      }
+      if (inlineViewerHelper.lookPitch > PITCH_LIMIT) {
+        inlineViewerHelper.lookPitch = PITCH_LIMIT;
+      }
+
+      // Normalizar yaw para evitar crecimiento infinito al dar vueltas
+      while (inlineViewerHelper.lookYaw > Math.PI) {
+        inlineViewerHelper.lookYaw -= 2 * Math.PI;
+      }
+      while (inlineViewerHelper.lookYaw < -Math.PI) {
+        inlineViewerHelper.lookYaw += 2 * Math.PI;
+      }
+    }
+    // ============================================================
+
+    function initXR() {
+      xrButton = new WebXRButton({
+        onRequestSession: onRequestSession,
+        onEndSession: onEndSession,
+        textEnterXR: "INICIAR PANORAMA",
+        textXRNotFound: "XR NO SOPORTADO",
+        textLeaveXR: "SALIR"
+      });
+      document.querySelector('header').appendChild(xrButton.domElement);
+
+      if (navigator.xr) {
+        navigator.xr.isSessionSupported('inline').then((supported) => {
+          xrButton.enabled = supported;
+        });
+      }
+    }
+
+    function onRequestSession() {
+      // SOLUCIÓN AL FONDO NEGRO: Al pedir una sesión inline, pasamos explícitamente la característica "viewer"
+      // Esto le otorga al navegador los permisos internos necesarios para instanciar la cámara en pantalla plana.
+      return navigator.xr.requestSession('inline', {
+        requiredFeatures: ['viewer']
+      }).then(onSessionStarted);
+    }
+
+    function onSessionStarted(session) {
+      xrSession = session;
+      xrButton.setSession(session);
+      session.addEventListener('end', onSessionEnded);
+
+      initGL();
+
+      let glLayer = new XRWebGLLayer(session, gl);
+      session.updateRenderState({ baseLayer: glLayer });
+
+      // Solicitamos el espacio de referencia básico que permite inicializar el lienzo
+      session.requestReferenceSpace('viewer').then((refSpace) => {
+        xrRefSpace = refSpace;
+        
+        // Inicializamos el asistente para poder mover la cámara arrastrando con el dedo o con el ratón
+        inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
+        inlineViewerHelper.setHeight(1.6); 
+
+        session.requestAnimationFrame(onXRFrame);
+      });
+    }
+
+    function initGL() {
+      if (gl) return;
+      gl = createWebGLContext({ xrCompatible: true });
+      document.body.appendChild(gl.canvas);
+
+      onResize();
+      window.addEventListener('resize', onResize);
+
+      renderer = new Renderer(gl);
+      scene.setRenderer(renderer);
+    }
+
+    function onResize() {
+      if (!gl) return;
+      gl.canvas.width = gl.canvas.clientWidth * window.devicePixelRatio;
+      gl.canvas.height = gl.canvas.clientHeight * window.devicePixelRatio;
+    }
+
+    function onEndSession(session) {
+      session.end();
+    }
+
+    function onSessionEnded(event) {
+      xrButton.setSession(null);
+      xrSession = null;
+    }
+
+    function onXRFrame(t, frame) {
+      let session = frame.session;
+
+      // ============================================================
+      // NUEVO: Leer la palanca derecha del Robot White Xbox
+      // ============================================================
+      updateGamepadCamera();
+
+      // Construimos el espacio de referencia con el ORDEN CORRECTO de rotaciones:
+      // 1. Yaw primero  -> sobre el eje Y MUNDIAL (vertical). Así el giro
+      //    izquierda/derecha siempre es plano, sin importar dónde mires.
+      // 2. Pitch después -> sobre el eje X LOCAL de la cámara ya girada.
+      //    Así mirar arriba/abajo es puro pitch, NUNCA roll.
+      //
+      // El InlineViewerHelper original hace pitch primero y luego yaw,
+      // lo que inclina el eje Y y produce roll al mirar arriba/abajo.
+      // ============================================================
+      let refSpace = inlineViewerHelper.baseRefSpace;
+      let yaw = inlineViewerHelper.lookYaw;
+      let pitch = inlineViewerHelper.lookPitch;
+      let height = inlineViewerHelper.viewerHeight;
+
+      // Quaternion: yaw primero, luego pitch
+      // q = q_pitch * q_yaw
+      let halfYaw = -yaw * 0.5;
+      let halfPitch = -pitch * 0.5;
+      let cy = Math.cos(halfYaw);
+      let sy = Math.sin(halfYaw);
+      let cp = Math.cos(halfPitch);
+      let sp = Math.sin(halfPitch);
+
+      let q = {
+        w: cp * cy,
+        x: sp * cy,
+        y: cp * sy,
+        z: sp * sy
+      };
+
+      let xform = new XRRigidTransform(
+        { x: 0, y: 0, z: 0 },
+        { x: q.x, y: q.y, z: q.z, w: q.w }
+      );
+      refSpace = refSpace.getOffsetReferenceSpace(xform);
+
+      // Aplicar altura del visor (1.6m)
+      xform = new XRRigidTransform({ y: -height });
+      refSpace = refSpace.getOffsetReferenceSpace(xform);
+      // ============================================================
+
+      // Consultamos la pose con el espacio corregido
+      let pose = frame.getViewerPose(refSpace);
+
+      scene.startFrame();
+      session.requestAnimationFrame(onXRFrame);
+
+      if (pose) {
+        // Renderizamos de manera segura la capa de dibujo
+        scene.drawXRFrame(frame, pose);
+      }
+
+      scene.endFrame();
+    }
+
+    initXR();
+  </script>
+</body>
+</html>
