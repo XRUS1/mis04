@@ -20,7 +20,8 @@ Licensed under the MIT License
  <details open>
  <summary>Escala de habitacion</summary>
  <p>
- Haz clic abajo para iniciar. Explora el entorno en 360 grados usando la rueda del control Fortune Tech Wireless.
+ Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del 
+celular o con el ratón en la computadora.
  <a class="back" href="./">Back</a>
  </p>
  </details>
@@ -82,54 +83,9 @@ Licensed under the MIT License
  session.requestReferenceSpace('viewer').then((refSpace) => {
  xrRefSpace = refSpace;
  
- // Inicializamos el asistente original de tu archivo importado sin alterarlo
+ // Inicializamos el asistente para poder mover la cámara arrastrando con el dedo o con el ratón
  inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
  inlineViewerHelper.setHeight(1.6); 
-
- // --- INYECCIÓN SEGURA PARA EL CONTROL FORTUNE TECH ---
- // Inicializamos las variables de rotación directamente dentro de la instancia del helper
- inlineViewerHelper._fortuneYaw = 0;
- inlineViewerHelper._fortunePitch = 0;
-
- // Sobrescribimos el método nativo que calcula el espacio de referencia de forma transparente
- Object.defineProperty(inlineViewerHelper, 'referenceSpace', {
-   get: function() {
-     const gamepads = navigator.getGamepads();
-     const remote = gamepads; // Captura el control conectado en el Samsung
-
-     if (remote) {
-       const deadzone = 0.15;     // Zona muerta física de la rueda
-       const sensibilidad = 0.02; // Velocidad del panorama (Pitch y Yaw)
-
-       // Rueda Izquierda / Derecha -> Modifica Yaw (Eje Y de Three.js)
-       if (Math.abs(remote.axes) > deadzone) {
-         this._fortuneYaw -= remote.axes * sensibilidad;
-       }
-
-       // Rueda Arriba / Abajo -> Modifica Pitch (Eje X de Three.js)
-       if (Math.abs(remote.axes) > deadzone) {
-         this._fortunePitch -= remote.axes * sensibilidad;
-         // Límite rígido de 85 grados arriba/abajo para no quedar de cabeza y bloquear el Roll
-         const maxPitch = Math.PI / 2 - 0.09;
-         this._fortunePitch = Math.max(-maxPitch, Math.min(maxPitch, this._fortunePitch));
-       }
-     }
-
-     // Generamos la matriz matemática exacta combinando Pitch y Yaw (Roll estrictamente en 0)
-     let customTransform = new XRRigidTransform(
-       { x: 0, y: this._height, z: 0, w: 1 }, // Posición fija con la altura nativa (1.6)
-       {
-         x: Math.sin(this._fortunePitch / 2) * Math.cos(this._fortuneYaw / 2),
-         y: Math.cos(this._fortunePitch / 2) * Math.sin(this._fortuneYaw / 2),
-         z: -Math.sin(this._fortunePitch / 2) * Math.sin(this._fortuneYaw / 2), // Componente Z neutralizada
-         w: Math.cos(this._fortunePitch / 2) * Math.cos(this._fortuneYaw / 2)
-       }
-     );
-
-     return this.baseRefSpace.getOffsetReferenceSpace(customTransform);
-   }
- });
-
  session.requestAnimationFrame(onXRFrame);
  });
  }
@@ -159,7 +115,7 @@ Licensed under the MIT License
  function onXRFrame(t, frame) {
  let session = frame.session;
  
- // Tu bucle nativo consulta la pose de forma 100% idéntica e intacta
+ // Consultamos la pose generada a través de las interacciones táctiles/ratón calculadas por el helper
  let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
  let pose = frame.getViewerPose(refSpace);
  scene.startFrame();
@@ -170,6 +126,30 @@ Licensed under the MIT License
  }
 
 ### Page 4 ###
+  // --- OYENTE EXTERNO E INDEPENDIENTE PARA EL MANDO FORTUNE TECH ---
+  // Este bloque corre de forma aislada sin tocar las funciones ni la estructura de WebXR superior
+  const gamepads = navigator.getGamepads();
+  const remote = gamepads; // Detecta el control activo en el Samsung
+
+  if (remote && inlineViewerHelper) {
+    const deadzone = 0.15;     // Filtra variaciones físicas si la rueda está en reposo
+    const sensibilidad = 0.02; // Modifica la velocidad del paneo de cámara
+
+    // Movimiento Horizontal de la rueda (Eje X) -> Se suma directamente al Yaw interno del helper
+    if (Math.abs(remote.axes) > deadzone) {
+      inlineViewerHelper._lookYaw -= remote.axes * sensibilidad;
+    }
+
+    // Movimiento Vertical de la rueda (Eje Y) -> Se suma directamente al Pitch interno del helper
+    if (Math.abs(remote.axes) > deadzone) {
+      inlineViewerHelper._lookPitch -= remote.axes * sensibilidad;
+      
+      // Aplicamos un límite estricto de seguridad para que la cámara no dé la vuelta vertical completa (Bloquea el Roll)
+      const maxPitch = Math.PI / 2 - 0.05;
+      inlineViewerHelper._lookPitch = Math.max(-maxPitch, Math.min(maxPitch, inlineViewerHelper._lookPitch));
+    }
+  }
+
  scene.endFrame();
  }
  initXR();
