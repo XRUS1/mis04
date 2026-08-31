@@ -1,1 +1,159 @@
+### Page 1 ###
+<!doctype html>
+<!--
+Copyright 2018 The Immersive Web Community Group
+Licensed under the MIT License
+-->
+<html>
+<head>
+ <meta charset='utf-8'>
+ <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover'>
+ <meta name='mobile-web-app-capable' content='yes'>
+ <meta name='apple-mobile-web-app-capable' content='yes'>
+ <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
+ <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
+ <link rel='stylesheet' href='css/common.css'>
+ <title>Seguimiento a escala de la habitacion (Magic Window)</title>
+</head>
+<body>
+ <header>
+ <details open>
+ <summary>Escala de habitacion</summary>
+ <p>
+ Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del 
+celular o usando la rueda de tu control Fortune Tech (en Modo Key).
+ <a class="back" href="./">Back</a>
+ </p>
+ </details>
+ </header>
+ <script type="module">
+ import { WebXRButton } from './js/util/webxr-button.js';
+ import { Scene } from './js/render/scenes/scene.js';
+ import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
+ import { Gltf2Node } from './js/render/nodes/gltf2.js';
+ import { SkyboxNode } from './js/render/nodes/skybox.js';
+ import { InlineViewerHelper } from './js/util/inline-viewer-helper.js';
+ import { QueryArgs } from './js/util/query-args.js';
+ import WebXRPolyfill from './js/third-party/webxr-polyfill/build/webxr-polyfill.module.js';
+ if (QueryArgs.getBool('usePolyfill', true)) {
+ let polyfill = new WebXRPolyfill();
+ }
+ let xrButton = null;
+ let xrSession = null;
+ let xrRefSpace = null;
+ let inlineViewerHelper = null;
+ let gl = null;
+
+### Page 2 ###
+ let renderer = null;
+ let scene = new Scene();
+ scene.addNode(new Gltf2Node({url: 'media/gltf/camp/ciudad.gltf'}));
+ scene.addNode(new SkyboxNode({url: 'media/textures/textura.png'}));
+ scene.standingStats(true);
+ function initXR() {
+ xrButton = new WebXRButton({
+ onRequestSession: onRequestSession,
+ onEndSession: onEndSession,
+ textEnterXR: "INICIAR PANORAMA",
+ textXRNotFound: "XR NO SOPORTADO",
+ textLeaveXR: "SALIR"
+ });
+ document.querySelector('header').appendChild(xrButton.domElement);
+ if (navigator.xr) {
+ navigator.xr.isSessionSupported('inline').then((supported) => {
+ xrButton.enabled = supported;
+ });
+ }
+ }
+ function onRequestSession() {
+ return navigator.xr.requestSession('inline', {
+ requiredFeatures: ['viewer']
+ }).then(onSessionStarted);
+ }
+ function onSessionStarted(session) {
+ xrSession = session;
+ xrButton.setSession(session);
+ session.addEventListener('end', onSessionEnded);
+ initGL();
+ let glLayer = new XRWebGLLayer(session, gl);
+ session.updateRenderState({ baseLayer: glLayer });
+ session.requestReferenceSpace('viewer').then((refSpace) => {
+ xrRefSpace = refSpace;
+ 
+ inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
+ inlineViewerHelper.setHeight(1.6); 
+ session.requestAnimationFrame(onXRFrame);
+ });
+ }
+
+### Page 3 ###
+ function initGL() {
+ if (gl) return;
+ gl = createWebGLContext({ xrCompatible: true });
+ document.body.appendChild(gl.canvas);
+ onResize();
+ window.addEventListener('resize', onResize);
+ renderer = new Renderer(gl);
+ scene.setRenderer(renderer);
+ }
+ function onResize() {
+ if (!gl) return;
+ gl.canvas.width = gl.canvas.clientWidth * window.devicePixelRatio;
+ gl.canvas.height = gl.canvas.clientHeight * window.devicePixelRatio;
+ }
+ function onEndSession(session) {
+ session.end();
+ }
+ function onSessionEnded(event) {
+ xrButton.setSession(null);
+ xrSession = null;
+ }
+ function onXRFrame(t, frame) {
+ let session = frame.session;
+ 
+ let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
+ let pose = frame.getViewerPose(refSpace);
+ scene.startFrame();
+ session.requestAnimationFrame(onXRFrame);
+ if (pose) {
+ scene.drawXRFrame(frame, pose);
+ }
+
+### Page 4 ###
+ scene.endFrame();
+ }
+
+ // --- ESCUCHADOR DE TECLADO EXTERNO PARA EL MANDO EN MODO KEY ---
+ // Lee el control simulando un teclado convencional sin alterar WebXR
+ window.addEventListener('keydown', (event) => {
+   if (inlineViewerHelper) {
+     const velocidadGiro = 0.05; // Ajusta qué tan rápido gira la cámara
+
+     // Al mover la rueda a la izquierda (envía flecha izquierda)
+     if (event.key === 'ArrowLeft') {
+       inlineViewerHelper._lookYaw += velocidadGiro;
+     }
+     // Al mover la rueda a la derecha (envía flecha derecha)
+     if (event.key === 'ArrowRight') {
+       inlineViewerHelper._lookYaw -= velocidadGiro;
+     }
+     // Al mover la rueda hacia arriba (envía flecha arriba)
+     if (event.key === 'ArrowUp') {
+       inlineViewerHelper._lookPitch += velocidadGiro;
+       const maxPitch = Math.PI / 2 - 0.05;
+       inlineViewerHelper._lookPitch = Math.max(-maxPitch, Math.min(maxPitch, inlineViewerHelper._lookPitch));
+     }
+     // Al mover la rueda hacia abajo (envía flecha abajo)
+     if (event.key === 'ArrowDown') {
+       inlineViewerHelper._lookPitch -= velocidadGiro;
+       const maxPitch = Math.PI / 2 - 0.05;
+       inlineViewerHelper._lookPitch = Math.max(-maxPitch, Math.min(maxPitch, inlineViewerHelper._lookPitch));
+     }
+   }
+ });
+
+ initXR();
+ </script>
+</body>
+</html>
 
