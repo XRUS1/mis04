@@ -21,7 +21,7 @@ Licensed under the MIT License
  <summary>Escala de habitacion</summary>
  <p>
  Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del 
-celular o usando las palancas de tu control de Xbox.
+celular o usando la palanca derecha de tu control de Xbox.
  <a class="back" href="./">Back</a>
  </p>
  </details>
@@ -120,34 +120,36 @@ celular o usando las palancas de tu control de Xbox.
  }
 
 ### Page 4 ###
-  // --- CAPTURA EXCLUSIVA DE LA PALANCA DERECHA DE XBOX ---
-  // Este bloque actúa de manera complementaria al final del renderizado sin modificar las variables nativas
-  try {
-    const gamepads = navigator.getGamepads();
-    const mandoXbox = Array.from(gamepads).find(g => g && g.id.toLowerCase().includes('xbox'));
+    // --- LECTOR SEGURO DE LA PALANCA DERECHA DE XBOX ---
+    // Colocado estratégicamente dentro del ciclo activo para evitar que el navegador bloquee la app al inicio
+    if (xrSession && inlineViewerHelper) {
+      try {
+        const gamepads = navigator.getGamepads();
+        const mandoXbox = Array.from(gamepads).find(g => g && g.id.toLowerCase().includes('xbox'));
 
-    if (mandoXbox && inlineViewerHelper) {
-      const zonaMuerta = 0.15; // Evita pequeños movimientos involuntarios por desgaste físico
-      const velocidad = 0.03;  // Sensibilidad recomendada para un paneo tridimensional suave
+        if (mandoXbox) {
+          const zonaMuerta = 0.15; 
+          const velocidad = 0.03;  
 
-      // PALANCA DERECHA ABAJO - Movimiento Lateral (Eje X -> Índice 2)
-      const joystickX = mandoXbox.axes[2]; 
-      if (Math.abs(joystickX) > zonaMuerta) {
-        inlineViewerHelper._lookYaw -= joystickX * velocidad;
-      }
+          // Mapeo exclusivo de la palanca derecha que está abajo:
+          // Movimiento Horizontal (Eje Índice 2) -> Modifica Yaw
+          const joystickX = mandoXbox.axes[2]; 
+          if (joystickX !== undefined && Math.abs(joystickX) > zonaMuerta) {
+            inlineViewerHelper._lookYaw -= joystickX * velocidad;
+          }
 
-      // PALANCA DERECHA ABAJO - Movimiento Vertical (Eje Y -> Índice 3)
-      const joystickY = mandoXbox.axes[3]; 
-      if (Math.abs(joystickY) > zonaMuerta) {
-        inlineViewerHelper._lookPitch -= joystickY * velocidad;
-        // Restricción del ángulo vertical para neutralizar el Roll y que la vista no gire de cabeza
-        const limiteMaximo = Math.PI / 2 - 0.05;
-        inlineViewerHelper._lookPitch = Math.max(-limiteMaximo, Math.min(limiteMaximo, inlineViewerHelper._lookPitch));
+          // Movimiento Vertical (Eje Índice 3) -> Modifica Pitch
+          const joystickY = mandoXbox.axes[3]; 
+          if (joystickY !== undefined && Math.abs(joystickY) > zonaMuerta) {
+            inlineViewerHelper._lookPitch -= joystickY * velocidad;
+            const limiteMaximo = Math.PI / 2 - 0.05; // Mantiene el Roll bloqueado en 0
+            inlineViewerHelper._lookPitch = Math.max(-limiteMaximo, Math.min(limiteMaximo, inlineViewerHelper._lookPitch));
+          }
+        }
+      } catch (e) {
+        // Resguardo en silencio si se desconecta el control
       }
     }
-  } catch (error) {
-    // Si no detecta el control, el bloque try captura el error y permite seguir usando el dedo
-  }
 
  scene.endFrame();
  }
