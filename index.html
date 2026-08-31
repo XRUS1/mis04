@@ -9,7 +9,7 @@ Licensed under the MIT License
   <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover'>
   <meta name='mobile-web-app-capable' content='yes'>
   <meta name='apple-mobile-web-app-capable' content='yes'>
-  <link rel='icon' type='image/png' sizes='3232' href='favicon-32x32.png'>
+  <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
   <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
   <link rel='stylesheet' href='css/common.css'>
   <title>Seguimiento a escala de la habitacion (Magic Window)</title>
@@ -19,7 +19,8 @@ Licensed under the MIT License
     <details open>
       <summary>Escala de habitacion</summary>
       <p>
-        Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del celular o con el ratÃ³n en la computadora.
+        Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del celular o con el ratón en la computadora.
+        También puedes usar la palanca derecha del control Xbox Robot White.
         <a class="back" href="./">Back</a>
       </p>
     </details>
@@ -52,6 +53,73 @@ Licensed under the MIT License
     scene.addNode(new SkyboxNode({url: 'media/textures/textura.png'}));
     scene.standingStats(true);
 
+    // ============================================================
+    // NUEVO: Estado para la palanca derecha del Robot White Xbox
+    // ============================================================
+    let gamepadYaw = 0;
+    let gamepadPitch = 0;
+
+    function getXboxGamepad() {
+      let gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      // Buscar específicamente un Xbox (Robot White u otro)
+      for (let gp of gamepads) {
+        if (gp && gp.connected && gp.id && gp.id.toLowerCase().includes('xbox')) {
+          return gp;
+        }
+      }
+      // Fallback: cualquier gamepad con 2 sticks (4 ejes mínimo)
+      for (let gp of gamepads) {
+        if (gp && gp.connected && gp.axes && gp.axes.length >= 4) {
+          return gp;
+        }
+      }
+      return null;
+    }
+
+    function updateGamepadCamera() {
+      let gp = getXboxGamepad();
+      if (!gp) return;
+
+      const DEADZONE = 0.15;
+      const SENSITIVITY = 0.03;
+
+      // Right Stick del Xbox:
+      // axes[2] = X (izquierda/derecha) -> Yaw
+      // axes[3] = Y (arriba/abajo)      -> Pitch
+      let rx = gp.axes[2];
+      let ry = gp.axes[3];
+
+      if (Math.abs(rx) > DEADZONE) {
+        gamepadYaw -= rx * SENSITIVITY;
+      }
+      if (Math.abs(ry) > DEADZONE) {
+        gamepadPitch -= ry * SENSITIVITY;
+      }
+
+      // Limitar pitch para no dar la vuelta completa (como en primera persona)
+      const PITCH_LIMIT = Math.PI / 2 - 0.05;
+      gamepadPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, gamepadPitch));
+    }
+
+    function getGamepadRotation() {
+      // Convertir yaw (Y) + pitch (X) a quaternion
+      // Orden: yaw luego pitch
+      let hy = gamepadYaw * 0.5;
+      let hp = gamepadPitch * 0.5;
+      let cy = Math.cos(hy);
+      let sy = Math.sin(hy);
+      let cp = Math.cos(hp);
+      let sp = Math.sin(hp);
+
+      return {
+        x: cy * sp,
+        y: sy * cp,
+        z: -sy * sp,
+        w: cy * cp
+      };
+    }
+    // ============================================================
+
     function initXR() {
       xrButton = new WebXRButton({
         onRequestSession: onRequestSession,
@@ -70,8 +138,8 @@ Licensed under the MIT License
     }
 
     function onRequestSession() {
-      // SOLUCIÃ“N AL FONDO NEGRO: Al pedir una sesiÃ³n inline, pasamos explÃ­citamente la caracterÃ­stica "viewer"
-      // Esto le otorga al navegador los permisos internos necesarios para instanciar la cÃ¡mara en pantalla plana.
+      // SOLUCIÓN AL FONDO NEGRO: Al pedir una sesión inline, pasamos explícitamente la característica "viewer"
+      // Esto le otorga al navegador los permisos internos necesarios para instanciar la cámara en pantalla plana.
       return navigator.xr.requestSession('inline', {
         requiredFeatures: ['viewer']
       }).then(onSessionStarted);
@@ -87,11 +155,11 @@ Licensed under the MIT License
       let glLayer = new XRWebGLLayer(session, gl);
       session.updateRenderState({ baseLayer: glLayer });
 
-      // Solicitamos el espacio de referencia bÃ¡sico que permite inicializar el lienzo
+      // Solicitamos el espacio de referencia básico que permite inicializar el lienzo
       session.requestReferenceSpace('viewer').then((refSpace) => {
         xrRefSpace = refSpace;
         
-        // Inicializamos el asistente para poder mover la cÃ¡mara arrastrando con el dedo o con el ratÃ³n
+        // Inicializamos el asistente para poder mover la cámara arrastrando con el dedo o con el ratón
         inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
         inlineViewerHelper.setHeight(1.6); 
 
@@ -128,9 +196,36 @@ Licensed under the MIT License
 
     function onXRFrame(t, frame) {
       let session = frame.session;
-      
-      // Consultamos la pose generada a travÃ©s de las interacciones tÃ¡ctiles/ratÃ³n calculadas por el helper
-      let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
+
+      // ============================================================
+      // NUEVO: Leer la palanca derecha del Robot White Xbox
+      // ============================================================
+      updateGamepadCamera();
+
+      // Obtenemos el espacio base (del helper o el original)
+      let baseRefSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
+      let refSpace = baseRefSpace;
+
+      // Si hay rotación acumulada del gamepad, la aplicamos como offset
+      // sobre el espacio que ya trae el touch/ratón. Así ambos funcionan
+      // simultáneamente sin pisarse.
+      if (Math.abs(gamepadYaw) > 0.0001 || Math.abs(gamepadPitch) > 0.0001) {
+        try {
+          let q = getGamepadRotation();
+          let transform = new XRRigidTransform(
+            { x: 0, y: 0, z: 0 },
+            { x: q.x, y: q.y, z: q.z, w: q.w }
+          );
+          refSpace = baseRefSpace.getOffsetReferenceSpace(transform);
+        } catch (e) {
+          // Si el navegador no soporta el offset, seguimos con el base
+          refSpace = baseRefSpace;
+        }
+      }
+      // ============================================================
+
+      // Consultamos la pose generada a través de las interacciones táctiles/ratón calculadas por el helper
+      // (más el offset del gamepad si aplica)
       let pose = frame.getViewerPose(refSpace);
 
       scene.startFrame();
