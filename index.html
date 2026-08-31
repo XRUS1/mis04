@@ -126,29 +126,31 @@ celular o con el ratón en la computadora.
  }
 
 ### Page 4 ###
-  // --- OYENTE EXTERNO E INDEPENDIENTE PARA EL MANDO FORTUNE TECH ---
-  // Este bloque corre de forma aislada sin tocar las funciones ni la estructura de WebXR superior
-  const gamepads = navigator.getGamepads();
-  const remote = gamepads; // Detecta el control activo en el Samsung
+  // --- CONTROL DEL MANDO ADICIONAL ---
+  // Este bloque funciona de forma externa sin tocar la programación de WebXR
+  try {
+    const gamepads = navigator.getGamepads();
+    const mando = gamepads[0]; // Captura el control en el teléfono Samsung
 
-  if (remote && inlineViewerHelper) {
-    const deadzone = 0.15;     // Filtra variaciones físicas si la rueda está en reposo
-    const sensibilidad = 0.02; // Modifica la velocidad del paneo de cámara
+    if (mando && inlineViewerHelper) {
+      const zonaMuerta = 0.15;
+      const velocidad = 0.02;
 
-    // Movimiento Horizontal de la rueda (Eje X) -> Se suma directamente al Yaw interno del helper
-    if (Math.abs(remote.axes) > deadzone) {
-      inlineViewerHelper._lookYaw -= remote.axes * sensibilidad;
+      // Movimiento de la rueda a los lados cambia la orientación horizontal (Yaw)
+      if (Math.abs(mando.axes[0]) > zonaMuerta) {
+        inlineViewerHelper._lookYaw -= mando.axes[0] * velocidad;
+      }
+
+      // Movimiento de la rueda arriba/abajo cambia la orientación vertical (Pitch)
+      if (Math.abs(mando.axes[1]) > zonaMuerta) {
+        inlineViewerHelper._lookPitch -= mando.axes[1] * velocidad;
+        
+        // Mantener la cámara dentro del límite físico de la mirada para bloquear el Roll
+        const limiteMaximo = Math.PI / 2 - 0.05;
+        inlineViewerHelper._lookPitch = Math.max(-limiteMaximo, Math.min(limiteMaximo, inlineViewerHelper._lookPitch));
+      }
     }
-
-    // Movimiento Vertical de la rueda (Eje Y) -> Se suma directamente al Pitch interno del helper
-    if (Math.abs(remote.axes) > deadzone) {
-      inlineViewerHelper._lookPitch -= remote.axes * sensibilidad;
-      
-      // Aplicamos un límite estricto de seguridad para que la cámara no dé la vuelta vertical completa (Bloquea el Roll)
-      const maxPitch = Math.PI / 2 - 0.05;
-      inlineViewerHelper._lookPitch = Math.max(-maxPitch, Math.min(maxPitch, inlineViewerHelper._lookPitch));
-    }
-  }
+  } catch(e) {}
 
  scene.endFrame();
  }
