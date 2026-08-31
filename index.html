@@ -90,33 +90,19 @@ Licensed under the MIT License
       let ry = gp.axes[3];
 
       if (Math.abs(rx) > DEADZONE) {
-        gamepadYaw -= rx * SENSITIVITY;
+        gamepadYaw += rx * SENSITIVITY;  // CORREGIDO: + para que derecha = derecha
       }
       if (Math.abs(ry) > DEADZONE) {
         gamepadPitch -= ry * SENSITIVITY;
       }
 
-      // Limitar pitch para no dar la vuelta completa (como en primera persona)
+      // Limitar pitch para no dar la vuelta completa (evita mirar por detrás)
       const PITCH_LIMIT = Math.PI / 2 - 0.05;
       gamepadPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, gamepadPitch));
-    }
 
-    function getGamepadRotation() {
-      // Convertir yaw (Y) + pitch (X) a quaternion
-      // Orden: yaw luego pitch
-      let hy = gamepadYaw * 0.5;
-      let hp = gamepadPitch * 0.5;
-      let cy = Math.cos(hy);
-      let sy = Math.sin(hy);
-      let cp = Math.cos(hp);
-      let sp = Math.sin(hp);
-
-      return {
-        x: cy * sp,
-        y: sy * cp,
-        z: -sy * sp,
-        w: cy * cp
-      };
+      // Normalizar yaw para evitar que el ángulo crezca infinitamente
+      while (gamepadYaw > Math.PI) gamepadYaw -= 2 * Math.PI;
+      while (gamepadYaw < -Math.PI) gamepadYaw += 2 * Math.PI;
     }
     // ============================================================
 
@@ -203,29 +189,36 @@ Licensed under the MIT License
       updateGamepadCamera();
 
       // Obtenemos el espacio base (del helper o el original)
-      let baseRefSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
-      let refSpace = baseRefSpace;
+      let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
 
-      // Si hay rotación acumulada del gamepad, la aplicamos como offset
-      // sobre el espacio que ya trae el touch/ratón. Así ambos funcionan
-      // simultáneamente sin pisarse.
+      // Si hay rotación acumulada del gamepad, la aplicamos en DOS PASOS:
+      // 1. Yaw sobre el eje Y mundial (del espacio base)
+      // 2. Pitch sobre el eje X LOCAL del espacio ya girado en yaw.
+      //    Esto evita el ROLL porque el eje X ya apunta correctamente
+      //    a la derecha de la cámara después de todo el yaw.
       if (Math.abs(gamepadYaw) > 0.0001 || Math.abs(gamepadPitch) > 0.0001) {
         try {
-          let q = getGamepadRotation();
-          let transform = new XRRigidTransform(
-            { x: 0, y: 0, z: 0 },
-            { x: q.x, y: q.y, z: q.z, w: q.w }
+          // Paso 1: Yaw (eje Y mundial)
+          let halfYaw = gamepadYaw * 0.5;
+          let qYaw = { x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) };
+          let yawSpace = refSpace.getOffsetReferenceSpace(
+            new XRRigidTransform({ x: 0, y: 0, z: 0 }, qYaw)
           );
-          refSpace = baseRefSpace.getOffsetReferenceSpace(transform);
+
+          // Paso 2: Pitch (eje X local del espacio ya girado)
+          let halfPitch = gamepadPitch * 0.5;
+          let qPitch = { x: Math.sin(halfPitch), y: 0, z: 0, w: Math.cos(halfPitch) };
+          refSpace = yawSpace.getOffsetReferenceSpace(
+            new XRRigidTransform({ x: 0, y: 0, z: 0 }, qPitch)
+          );
         } catch (e) {
-          // Si el navegador no soporta el offset, seguimos con el base
-          refSpace = baseRefSpace;
+          // Si el navegador no soporta el offset, seguimos con el espacio base
         }
       }
       // ============================================================
 
-      // Consultamos la pose generada a través de las interacciones táctiles/ratón calculadas por el helper
-      // (más el offset del gamepad si aplica)
+      // Consultamos la pose generada a través de las interacciones táctiles/ratón
+      // calculadas por el helper (más el offset del gamepad si aplica)
       let pose = frame.getViewerPose(refSpace);
 
       scene.startFrame();
