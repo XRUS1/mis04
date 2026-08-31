@@ -20,6 +20,7 @@ Licensed under the MIT License
       <summary>Escala de habitacion</summary>
       <p>
         Haz clic abajo para iniciar. Explora el entorno en 360 grados con la palanca derecha del control Xbox Robot White.
+        Usa la cruceta para fijar ejes: izquierda/derecha bloquea pitch, arriba/abajo bloquea yaw.
         <a class="back" href="./">Back</a>
       </p>
     </details>
@@ -51,11 +52,15 @@ Licensed under the MIT License
     scene.standingStats(true);
 
     // ============================================================
-    // CÁMARA CON GAMEPAD (reemplaza completamente dedo/ratón)
+    // CÁMARA CON GAMEPAD + CRUCETA PARA BLOQUEO DE EJES
     // ============================================================
     const VIEWER_HEIGHT = 1.6;
-    let camYaw = 0;    // acumulado total de yaw
-    let camPitch = 0;  // acumulado total de pitch
+    let camYaw = 0;
+    let camPitch = 0;
+
+    // Valores congelados cuando se presiona la cruceta
+    let lockedYaw = null;
+    let lockedPitch = null;
 
     function getXboxGamepad() {
       let gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -64,7 +69,6 @@ Licensed under the MIT License
           return gp;
         }
       }
-      // Fallback: cualquier gamepad con 2 sticks
       for (let gp of gamepads) {
         if (gp && gp.connected && gp.axes && gp.axes.length >= 4) {
           return gp;
@@ -80,23 +84,49 @@ Licensed under the MIT License
       const DEADZONE = 0.15;
       const SENSITIVITY = 0.03;
 
-      // Right Stick del Xbox:
+      // D-Pad (Cruceta) en Xbox:
+      // buttons[12] = Arriba
+      // buttons[13] = Abajo
+      // buttons[14] = Izquierda
+      // buttons[15] = Derecha
+      let dpadUp = gp.buttons[12] && gp.buttons[12].pressed;
+      let dpadDown = gp.buttons[13] && gp.buttons[13].pressed;
+      let dpadLeft = gp.buttons[14] && gp.buttons[14].pressed;
+      let dpadRight = gp.buttons[15] && gp.buttons[15].pressed;
+
+      let dpadHorizontal = dpadLeft || dpadRight;
+      let dpadVertical = dpadUp || dpadDown;
+
+      // Si se acaba de presionar la cruceta, congelar el eje opuesto
+      if (dpadHorizontal && lockedPitch === null) {
+        lockedPitch = camPitch;
+      }
+      if (dpadVertical && lockedYaw === null) {
+        lockedYaw = camYaw;
+      }
+
+      // Si se soltó la cruceta, desbloquear
+      if (!dpadHorizontal) lockedPitch = null;
+      if (!dpadVertical) lockedYaw = null;
+
+      // Right Stick:
       // axes[2] = X (izquierda/derecha) -> Yaw
       // axes[3] = Y (arriba/abajo)      -> Pitch
       let rx = gp.axes[2];
       let ry = gp.axes[3];
 
-      if (Math.abs(rx) > DEADZONE) {
+      // Aplicar yaw (si no está bloqueado por cruceta arriba/abajo)
+      if (lockedYaw === null && Math.abs(rx) > DEADZONE) {
         camYaw -= rx * SENSITIVITY;
       }
-      if (Math.abs(ry) > DEADZONE) {
+
+      // Aplicar pitch (si no está bloqueado por cruceta izquierda/derecha)
+      if (lockedPitch === null && Math.abs(ry) > DEADZONE) {
         camPitch += ry * SENSITIVITY;
       }
 
-      // Pitch: de arriba a abajo, 180° total. Sin ojos en la nuca.
+      // Limites
       camPitch = Math.max(-Math.PI * 0.5, Math.min(Math.PI * 0.5, camPitch));
-
-      // Normalizar yaw para evitar crecimiento infinito
       while (camYaw > Math.PI) camYaw -= 2 * Math.PI;
       while (camYaw < -Math.PI) camYaw += 2 * Math.PI;
     }
@@ -120,7 +150,6 @@ Licensed under the MIT License
     }
 
     function onRequestSession() {
-      // SOLUCIÓN AL FONDO NEGRO
       return navigator.xr.requestSession('inline', {
         requiredFeatures: ['viewer']
       }).then(onSessionStarted);
@@ -172,17 +201,8 @@ Licensed under the MIT License
     function onXRFrame(t, frame) {
       let session = frame.session;
 
-      // Leer palanca derecha del Robot White
       updateGamepadCamera();
 
-      // ============================================================
-      // CONSTRUIR ESPACIO DE REFERENCIA SIN ROLL
-      // ============================================================
-      // Orden correcto: YAW primero (eje Y mundial), luego PITCH (eje X local).
-      // Reconstruimos el quaternion desde CERO cada frame usando los ángulos
-      // totales acumulados. Esto evita completamente el drift de roll que
-      // causa acumular rotaciones Euler frame a frame.
-      // ============================================================
       let refSpace = xrRefSpace;
 
       let halfYaw = -camYaw * 0.5;
@@ -192,8 +212,6 @@ Licensed under the MIT License
       let cp = Math.cos(halfPitch);
       let sp = Math.sin(halfPitch);
 
-      // Quaternion que representa: primero yaw sobre Y, luego pitch sobre X local.
-      // q = q_pitch * q_yaw
       let q = {
         w: cp * cy,
         x: sp * cy,
@@ -207,10 +225,8 @@ Licensed under the MIT License
       );
       refSpace = refSpace.getOffsetReferenceSpace(xform);
 
-      // Aplicar altura del visor (1.6m)
       xform = new XRRigidTransform({ y: -VIEWER_HEIGHT });
       refSpace = refSpace.getOffsetReferenceSpace(xform);
-      // ============================================================
 
       let pose = frame.getViewerPose(refSpace);
 
