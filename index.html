@@ -1,3 +1,4 @@
+### Page 1 ###
 <!doctype html>
 <!--
 Copyright 2018 The Immersive Web Community Group
@@ -5,146 +6,173 @@ Licensed under the MIT License
 -->
 <html>
 <head>
-  <meta charset='utf-8'>
-  <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover'>
-  <meta name='mobile-web-app-capable' content='yes'>
-  <meta name='apple-mobile-web-app-capable' content='yes'>
-  <link rel='icon' type='image/png' sizes='3232' href='favicon-32x32.png'>
-  <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
-  <link rel='stylesheet' href='css/common.css'>
-  <title>Seguimiento a escala de la habitacion (Magic Window)</title>
+ <meta charset='utf-8'>
+ <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover'>
+ <meta name='mobile-web-app-capable' content='yes'>
+ <meta name='apple-mobile-web-app-capable' content='yes'>
+ <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
+ <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
+ <link rel='stylesheet' href='css/common.css'>
+ <title>Seguimiento a escala de la habitacion (Magic Window)</title>
 </head>
 <body>
-  <header>
-    <details open>
-      <summary>Escala de habitacion</summary>
-      <p>
-        Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del celular o con el ratón en la computadora.
-        <a class="back" href="./">Back</a>
-      </p>
-    </details>
-  </header>
+ <header>
+ <details open>
+ <summary>Escala de habitacion</summary>
+ <p>
+ Haz clic abajo para iniciar. Explora el entorno en 360 grados usando la rueda del control Fortune Tech Wireless.
+ <a class="back" href="./">Back</a>
+ </p>
+ </details>
+ </header>
+ <script type="module">
+ import { WebXRButton } from './js/util/webxr-button.js';
+ import { Scene } from './js/render/scenes/scene.js';
+ import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
+ import { Gltf2Node } from './js/render/nodes/gltf2.js';
+ import { SkyboxNode } from './js/render/nodes/skybox.js';
+ import { InlineViewerHelper } from './js/util/inline-viewer-helper.js';
+ import { QueryArgs } from './js/util/query-args.js';
+ import WebXRPolyfill from './js/third-party/webxr-polyfill/build/webxr-polyfill.module.js';
+ if (QueryArgs.getBool('usePolyfill', true)) {
+ let polyfill = new WebXRPolyfill();
+ }
+ let xrButton = null;
+ let xrSession = null;
+ let xrRefSpace = null;
+ let inlineViewerHelper = null;
+ let gl = null;
 
-  <script type="module">
-    import { WebXRButton } from './js/util/webxr-button.js';
-    import { Scene } from './js/render/scenes/scene.js';
-    import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
-    import { Gltf2Node } from './js/render/nodes/gltf2.js';
-    import { SkyboxNode } from './js/render/nodes/skybox.js';
-    import { InlineViewerHelper } from './js/util/inline-viewer-helper.js';
-    import { QueryArgs } from './js/util/query-args.js';
+### Page 2 ###
+ let renderer = null;
+ let scene = new Scene();
+ scene.addNode(new Gltf2Node({url: 'media/gltf/camp/ciudad.gltf'}));
+ scene.addNode(new SkyboxNode({url: 'media/textures/textura.png'}));
+ scene.standingStats(true);
+ function initXR() {
+ xrButton = new WebXRButton({
+ onRequestSession: onRequestSession,
+ onEndSession: onEndSession,
+ textEnterXR: "INICIAR PANORAMA",
+ textXRNotFound: "XR NO SOPORTADO",
+ textLeaveXR: "SALIR"
+ });
+ document.querySelector('header').appendChild(xrButton.domElement);
+ if (navigator.xr) {
+ navigator.xr.isSessionSupported('inline').then((supported) => {
+ xrButton.enabled = supported;
+ });
+ }
+ }
+ function onRequestSession() {
+ // SOLUCIÓN AL FONDO NEGRO: Al pedir una sesión inline, pasamos explícitamente la característica "viewer"
+ // Esto le otorga al navegador los permisos internos necesarios para instanciar la cámara en pantalla plana.
+ return navigator.xr.requestSession('inline', {
+ requiredFeatures: ['viewer']
+ }).then(onSessionStarted);
+ }
+ function onSessionStarted(session) {
+ xrSession = session;
+ xrButton.setSession(session);
+ session.addEventListener('end', onSessionEnded);
+ initGL();
+ let glLayer = new XRWebGLLayer(session, gl);
+ session.updateRenderState({ baseLayer: glLayer });
+ // Solicitamos el espacio de referencia básico que permite inicializar el lienzo
+ session.requestReferenceSpace('viewer').then((refSpace) => {
+ xrRefSpace = refSpace;
+ 
+ // Inicializamos el asistente original de tu archivo importado sin alterarlo
+ inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
+ inlineViewerHelper.setHeight(1.6); 
 
-    import WebXRPolyfill from './js/third-party/webxr-polyfill/build/webxr-polyfill.module.js';
-    if (QueryArgs.getBool('usePolyfill', true)) {
-      let polyfill = new WebXRPolyfill();
-    }
+ // --- INYECCIÓN SEGURA PARA EL CONTROL FORTUNE TECH ---
+ // Inicializamos las variables de rotación directamente dentro de la instancia del helper
+ inlineViewerHelper._fortuneYaw = 0;
+ inlineViewerHelper._fortunePitch = 0;
 
-    let xrButton = null;
-    let xrSession = null;
-    let xrRefSpace = null;
-    let inlineViewerHelper = null;
+ // Sobrescribimos el método nativo que calcula el espacio de referencia de forma transparente
+ Object.defineProperty(inlineViewerHelper, 'referenceSpace', {
+   get: function() {
+     const gamepads = navigator.getGamepads();
+     const remote = gamepads; // Captura el control conectado en el Samsung
 
-    let gl = null;
-    let renderer = null;
-    let scene = new Scene();
+     if (remote) {
+       const deadzone = 0.15;     // Zona muerta física de la rueda
+       const sensibilidad = 0.02; // Velocidad del panorama (Pitch y Yaw)
 
-    scene.addNode(new Gltf2Node({url: 'media/gltf/camp/ciudad.gltf'}));
-    scene.addNode(new SkyboxNode({url: 'media/textures/textura.png'}));
-    scene.standingStats(true);
+       // Rueda Izquierda / Derecha -> Modifica Yaw (Eje Y de Three.js)
+       if (Math.abs(remote.axes) > deadzone) {
+         this._fortuneYaw -= remote.axes * sensibilidad;
+       }
 
-    function initXR() {
-      xrButton = new WebXRButton({
-        onRequestSession: onRequestSession,
-        onEndSession: onEndSession,
-        textEnterXR: "INICIAR PANORAMA",
-        textXRNotFound: "XR NO SOPORTADO",
-        textLeaveXR: "SALIR"
-      });
-      document.querySelector('header').appendChild(xrButton.domElement);
+       // Rueda Arriba / Abajo -> Modifica Pitch (Eje X de Three.js)
+       if (Math.abs(remote.axes) > deadzone) {
+         this._fortunePitch -= remote.axes * sensibilidad;
+         // Límite rígido de 85 grados arriba/abajo para no quedar de cabeza y bloquear el Roll
+         const maxPitch = Math.PI / 2 - 0.09;
+         this._fortunePitch = Math.max(-maxPitch, Math.min(maxPitch, this._fortunePitch));
+       }
+     }
 
-      if (navigator.xr) {
-        navigator.xr.isSessionSupported('inline').then((supported) => {
-          xrButton.enabled = supported;
-        });
-      }
-    }
+     // Generamos la matriz matemática exacta combinando Pitch y Yaw (Roll estrictamente en 0)
+     let customTransform = new XRRigidTransform(
+       { x: 0, y: this._height, z: 0, w: 1 }, // Posición fija con la altura nativa (1.6)
+       {
+         x: Math.sin(this._fortunePitch / 2) * Math.cos(this._fortuneYaw / 2),
+         y: Math.cos(this._fortunePitch / 2) * Math.sin(this._fortuneYaw / 2),
+         z: -Math.sin(this._fortunePitch / 2) * Math.sin(this._fortuneYaw / 2), // Componente Z neutralizada
+         w: Math.cos(this._fortunePitch / 2) * Math.cos(this._fortuneYaw / 2)
+       }
+     );
 
-    function onRequestSession() {
-      // SOLUCIÓN AL FONDO NEGRO: Al pedir una sesión inline, pasamos explícitamente la característica "viewer"
-      // Esto le otorga al navegador los permisos internos necesarios para instanciar la cámara en pantalla plana.
-      return navigator.xr.requestSession('inline', {
-        requiredFeatures: ['viewer']
-      }).then(onSessionStarted);
-    }
+     return this.baseRefSpace.getOffsetReferenceSpace(customTransform);
+   }
+ });
 
-    function onSessionStarted(session) {
-      xrSession = session;
-      xrButton.setSession(session);
-      session.addEventListener('end', onSessionEnded);
+ session.requestAnimationFrame(onXRFrame);
+ });
+ }
 
-      initGL();
+### Page 3 ###
+ function initGL() {
+ if (gl) return;
+ gl = createWebGLContext({ xrCompatible: true });
+ document.body.appendChild(gl.canvas);
+ onResize();
+ window.addEventListener('resize', onResize);
+ renderer = new Renderer(gl);
+ scene.setRenderer(renderer);
+ }
+ function onResize() {
+ if (!gl) return;
+ gl.canvas.width = gl.canvas.clientWidth * window.devicePixelRatio;
+ gl.canvas.height = gl.canvas.clientHeight * window.devicePixelRatio;
+ }
+ function onEndSession(session) {
+ session.end();
+ }
+ function onSessionEnded(event) {
+ xrButton.setSession(null);
+ xrSession = null;
+ }
+ function onXRFrame(t, frame) {
+ let session = frame.session;
+ 
+ // Tu bucle nativo consulta la pose de forma 100% idéntica e intacta
+ let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
+ let pose = frame.getViewerPose(refSpace);
+ scene.startFrame();
+ session.requestAnimationFrame(onXRFrame);
+ if (pose) {
+ // Renderizamos de manera segura la capa de dibujo
+ scene.drawXRFrame(frame, pose);
+ }
 
-      let glLayer = new XRWebGLLayer(session, gl);
-      session.updateRenderState({ baseLayer: glLayer });
-
-      // Solicitamos el espacio de referencia básico que permite inicializar el lienzo
-      session.requestReferenceSpace('viewer').then((refSpace) => {
-        xrRefSpace = refSpace;
-        
-        // Inicializamos el asistente para poder mover la cámara arrastrando con el dedo o con el ratón
-        inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
-        inlineViewerHelper.setHeight(1.6); 
-
-        session.requestAnimationFrame(onXRFrame);
-      });
-    }
-
-    function initGL() {
-      if (gl) return;
-      gl = createWebGLContext({ xrCompatible: true });
-      document.body.appendChild(gl.canvas);
-
-      onResize();
-      window.addEventListener('resize', onResize);
-
-      renderer = new Renderer(gl);
-      scene.setRenderer(renderer);
-    }
-
-    function onResize() {
-      if (!gl) return;
-      gl.canvas.width = gl.canvas.clientWidth * window.devicePixelRatio;
-      gl.canvas.height = gl.canvas.clientHeight * window.devicePixelRatio;
-    }
-
-    function onEndSession(session) {
-      session.end();
-    }
-
-    function onSessionEnded(event) {
-      xrButton.setSession(null);
-      xrSession = null;
-    }
-
-    function onXRFrame(t, frame) {
-      let session = frame.session;
-      
-      // Consultamos la pose generada a través de las interacciones táctiles/ratón calculadas por el helper
-      let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
-      let pose = frame.getViewerPose(refSpace);
-
-      scene.startFrame();
-      session.requestAnimationFrame(onXRFrame);
-
-      if (pose) {
-        // Renderizamos de manera segura la capa de dibujo
-        scene.drawXRFrame(frame, pose);
-      }
-
-      scene.endFrame();
-    }
-
-    initXR();
-  </script>
+### Page 4 ###
+ scene.endFrame();
+ }
+ initXR();
+ </script>
 </body>
 </html>
