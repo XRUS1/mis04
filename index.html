@@ -66,8 +66,6 @@ celular o con el ratón en la computadora.
  }
  }
  function onRequestSession() {
- // SOLUCIÓN AL FONDO NEGRO: Al pedir una sesión inline, pasamos explícitamente la característica "viewer"
- // Esto le otorga al navegador los permisos internos necesarios para instanciar la cámara en pantalla plana.
  return navigator.xr.requestSession('inline', {
  requiredFeatures: ['viewer']
  }).then(onSessionStarted);
@@ -79,11 +77,9 @@ celular o con el ratón en la computadora.
  initGL();
  let glLayer = new XRWebGLLayer(session, gl);
  session.updateRenderState({ baseLayer: glLayer });
- // Solicitamos el espacio de referencia básico que permite inicializar el lienzo
  session.requestReferenceSpace('viewer').then((refSpace) => {
  xrRefSpace = refSpace;
  
- // Inicializamos el asistente para poder mover la cámara arrastrando con el dedo o con el ratón
  inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
  inlineViewerHelper.setHeight(1.6); 
  session.requestAnimationFrame(onXRFrame);
@@ -115,42 +111,44 @@ celular o con el ratón en la computadora.
  function onXRFrame(t, frame) {
  let session = frame.session;
  
- // Consultamos la pose generada a través de las interacciones táctiles/ratón calculadas por el helper
  let refSpace = inlineViewerHelper ? inlineViewerHelper.referenceSpace : xrRefSpace;
  let pose = frame.getViewerPose(refSpace);
  scene.startFrame();
  session.requestAnimationFrame(onXRFrame);
  if (pose) {
- // Renderizamos de manera segura la capa de dibujo
  scene.drawXRFrame(frame, pose);
  }
 
 ### Page 4 ###
-  // --- CONTROL DEL MANDO ADICIONAL ---
-  // Este bloque funciona de forma externa sin tocar la programación de WebXR
+  // --- BLOQUEO DEL ERROR DEL PDF Y LECTURA EXCLUSIVA DE LA RUEDA ---
   try {
     const gamepads = navigator.getGamepads();
-    const mando = gamepads[0]; // Captura el control en el teléfono Samsung
+    const mando = gamepads; 
 
     if (mando && inlineViewerHelper) {
       const zonaMuerta = 0.15;
       const velocidad = 0.02;
 
-      // Movimiento de la rueda a los lados cambia la orientación horizontal (Yaw)
-      if (Math.abs(mando.axes[0]) > zonaMuerta) {
-        inlineViewerHelper._lookYaw -= mando.axes[0] * velocidad;
+      // 1. Si el alumno presiona el botón problemático, forzamos al sistema a no abrir el PDF
+      if (mando.buttons.some(b => b.pressed)) {
+        window.onhelp = function() { return false; }; // Bloquea la ayuda nativa de Android
       }
 
-      // Movimiento de la rueda arriba/abajo cambia la orientación vertical (Pitch)
-      if (Math.abs(mando.axes[1]) > zonaMuerta) {
-        inlineViewerHelper._lookPitch -= mando.axes[1] * velocidad;
-        
-        // Mantener la cámara dentro del límite físico de la mirada para bloquear el Roll
+      // 2. Leemos la rueda de forma aislada (Eje X -> Yaw)
+      if (mando.axes && Math.abs(mando.axes) > zonaMuerta) {
+        inlineViewerHelper._lookYaw -= mando.axes * velocidad;
+      }
+
+      // 3. Leemos la rueda de forma aislada (Eje Y -> Pitch)
+      if (mando.axes && Math.abs(mando.axes) > zonaMuerta) {
+        inlineViewerHelper._lookPitch -= mando.axes * velocidad;
         const limiteMaximo = Math.PI / 2 - 0.05;
         inlineViewerHelper._lookPitch = Math.max(-limiteMaximo, Math.min(limiteMaximo, inlineViewerHelper._lookPitch));
       }
     }
-  } catch(e) {}
+  } catch(e) {
+    // Evita de forma ruda que cualquier fallo del control congele tu software
+  }
 
  scene.endFrame();
  }
