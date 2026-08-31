@@ -21,7 +21,7 @@ Licensed under the MIT License
  <summary>Escala de habitacion</summary>
  <p>
  Haz clic abajo para iniciar. Explora el entorno en 360 grados arrastrando tu dedo en la pantalla del 
-celular o usando la rueda de tu control Fortune Tech (en Modo Key).
+celular o usando las palancas de tu control de Xbox.
  <a class="back" href="./">Back</a>
  </p>
  </details>
@@ -120,40 +120,38 @@ celular o usando la rueda de tu control Fortune Tech (en Modo Key).
  }
 
 ### Page 4 ###
+  // --- CAPTURA EXCLUSIVA DE LA PALANCA DERECHA DE XBOX ---
+  // Este bloque actúa de manera complementaria al final del renderizado sin modificar las variables nativas
+  try {
+    const gamepads = navigator.getGamepads();
+    const mandoXbox = Array.from(gamepads).find(g => g && g.id.toLowerCase().includes('xbox'));
+
+    if (mandoXbox && inlineViewerHelper) {
+      const zonaMuerta = 0.15; // Evita pequeños movimientos involuntarios por desgaste físico
+      const velocidad = 0.03;  // Sensibilidad recomendada para un paneo tridimensional suave
+
+      // PALANCA DERECHA ABAJO - Movimiento Lateral (Eje X -> Índice 2)
+      const joystickX = mandoXbox.axes[2]; 
+      if (Math.abs(joystickX) > zonaMuerta) {
+        inlineViewerHelper._lookYaw -= joystickX * velocidad;
+      }
+
+      // PALANCA DERECHA ABAJO - Movimiento Vertical (Eje Y -> Índice 3)
+      const joystickY = mandoXbox.axes[3]; 
+      if (Math.abs(joystickY) > zonaMuerta) {
+        inlineViewerHelper._lookPitch -= joystickY * velocidad;
+        // Restricción del ángulo vertical para neutralizar el Roll y que la vista no gire de cabeza
+        const limiteMaximo = Math.PI / 2 - 0.05;
+        inlineViewerHelper._lookPitch = Math.max(-limiteMaximo, Math.min(limiteMaximo, inlineViewerHelper._lookPitch));
+      }
+    }
+  } catch (error) {
+    // Si no detecta el control, el bloque try captura el error y permite seguir usando el dedo
+  }
+
  scene.endFrame();
  }
-
- // --- ESCUCHADOR DE TECLADO EXTERNO PARA EL MANDO EN MODO KEY ---
- // Lee el control simulando un teclado convencional sin alterar WebXR
- window.addEventListener('keydown', (event) => {
-   if (inlineViewerHelper) {
-     const velocidadGiro = 0.05; // Ajusta qué tan rápido gira la cámara
-
-     // Al mover la rueda a la izquierda (envía flecha izquierda)
-     if (event.key === 'ArrowLeft') {
-       inlineViewerHelper._lookYaw += velocidadGiro;
-     }
-     // Al mover la rueda a la derecha (envía flecha derecha)
-     if (event.key === 'ArrowRight') {
-       inlineViewerHelper._lookYaw -= velocidadGiro;
-     }
-     // Al mover la rueda hacia arriba (envía flecha arriba)
-     if (event.key === 'ArrowUp') {
-       inlineViewerHelper._lookPitch += velocidadGiro;
-       const maxPitch = Math.PI / 2 - 0.05;
-       inlineViewerHelper._lookPitch = Math.max(-maxPitch, Math.min(maxPitch, inlineViewerHelper._lookPitch));
-     }
-     // Al mover la rueda hacia abajo (envía flecha abajo)
-     if (event.key === 'ArrowDown') {
-       inlineViewerHelper._lookPitch -= velocidadGiro;
-       const maxPitch = Math.PI / 2 - 0.05;
-       inlineViewerHelper._lookPitch = Math.max(-maxPitch, Math.min(maxPitch, inlineViewerHelper._lookPitch));
-     }
-   }
- });
-
  initXR();
  </script>
 </body>
 </html>
-
